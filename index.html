@@ -2517,7 +2517,8 @@
         }
         var ytdExp = ytd.dairy + ytd.agriExp + ytd.med + ytd.women;
         $('dYTD').innerHTML = '<div class="dash-card dc-green"><div class="lbl">YTD ' + ytdYear + ' Income</div><div class="val">' + fmt(ytd.income) + '</div></div><div class="dash-card dc-red"><div class="lbl">YTD Expenses</div><div class="val">' + fmt(ytdExp) + '</div></div><div class="dash-card dc-navy"><div class="lbl">YTD Profit (before lease)</div><div class="val">' + fmt(ytd.income - ytdExp) + '</div></div>';
-}
+    
+
 
         function saveLeaseSettingsFromUI() {
             var a = parseFloat($('leaseAcres').value) || 0;
