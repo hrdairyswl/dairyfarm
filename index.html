@@ -448,7 +448,8 @@
             font-size: 12px;
         }
 
-        .filter-bar input[type="date"] {
+        .filter-bar input[type="date"],
+        .filter-bar input[type="month"] {
             padding: 4px 8px;
             border: 1px solid #cbd5e0;
             border-radius: 4px;
@@ -497,6 +498,7 @@
         input[type=text],
         input[type=number],
         input[type=tel],
+        input[type=month],
         select {
             width: 100%;
             padding: 4px;
@@ -1108,15 +1110,17 @@
                 </h3>
                 <div class="sum-bar" id="empSummary"></div>
                 <div class="filter-bar">
+                    <label>Month:</label> <input type="month" id="filter-emp-month" onchange="filterEmployees()">
+                    <button class="btn btn-sm btn-grey" onclick="document.getElementById('filter-emp-month').value=''; filterEmployees();">Clear</button>
                     <button class="btn btn-sm btn-navy" onclick="sortTab('empBody')">Sort &#8595;</button>
                 </div>
                 <div class="table-wrap">
                     <table>
                         <thead><tr>
-                            <th style="width:32px">#</th><th style="width:100px">Name</th><th style="width:110px">Designation</th>
-                            <th style="width:110px">Phone</th><th style="width:130px">CNIC</th><th>Address</th>
-                            <th style="width:70px">Basic</th><th style="width:70px">Bonus</th><th style="width:70px">Deduct</th>
-                            <th style="width:70px">Advance</th><th style="width:80px">Net</th><th style="width:50px">&mdash;</th>
+                            <th style="width:32px">#</th><th style="width:110px">Month</th><th style="width:100px">Name</th>
+                            <th style="width:110px">Designation</th><th style="width:110px">Phone</th><th style="width:130px">CNIC</th>
+                            <th>Address</th><th style="width:70px">Basic</th><th style="width:70px">Bonus</th>
+                            <th style="width:70px">Deduct</th><th style="width:70px">Advance</th><th style="width:80px">Net</th><th style="width:50px">&mdash;</th>
                         </tr></thead>
                         <tbody id="empBody"></tbody>
                     </table>
@@ -1286,7 +1290,7 @@
         function toDisplayDate(iso) { if (!iso) return ''; if (iso.indexOf('/') > -1) return iso; var p = iso.split('-'); return p.length === 3 ? (p[2] + '/' + p[1] + '/' + p[0]) : iso; }
         function toStorageDate(d) { if (!d) return ''; if (d.indexOf('-') > -1) return d; var p = d.split('/'); return (p.length === 3 && p[2].length === 4) ? (p[2] + '-' + p[1] + '-' + p[0]) : d; }
         function autoFormatDate(input) { var v = input.value.replace(/[^0-9]/g, ''); if (v.length > 8) v = v.slice(0, 8); if (v.length > 4) v = v.slice(0, 2) + '/' + v.slice(2, 4) + '/' + v.slice(4); else if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2); input.value = v; }
-        function getMonthName(mKey) { var p = mKey.split('-'); var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; return months[parseInt(p[1]) - 1] + ' ' + p[0]; }
+        function getMonthName(mKey) { if(!mKey) return ''; var p = mKey.split('-'); var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; return months[parseInt(p[1]) - 1] + ' ' + p[0]; }
         function shiftMonth(mKey, n) { var p = mKey.split('-'); var y = parseInt(p[0]), m = parseInt(p[1]) + n; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return y + '-' + String(m).padStart(2, '0'); }
 
         // ============================================================
@@ -1329,8 +1333,7 @@
             var roleEl = $('userRole');
             roleEl.textContent = currentUser.role;
             roleEl.className = 'role-badge role-' + currentUser.role;
-            updateSyncBar('online', 'Ready');
-            initApp();
+            initApp(); // Load data
         }
 
         function signOut() {
@@ -1345,73 +1348,53 @@
         function updateSyncBar(state, msg) {
             $('syncBar').className = 'sync-bar ' + state;
             $('syncText').textContent = msg;
-            var pending = getPendingMonths();
-            var count = Object.keys(pending).length;
-            $('pendingCount').textContent = count ? ('· ' + count + ' pending') : '';
             var last = localStorage.getItem('hrFarm_lastSave');
             $('lastSaved').textContent = last ? ('· ' + last) : '';
         }
 
-        function getPendingMonths() { try { return JSON.parse(localStorage.getItem('hrFarm_pending') || '{}'); } catch (e) { return {}; } }
-        function setPendingMonths(obj) { localStorage.setItem('hrFarm_pending', JSON.stringify(obj)); }
-        function markPending(m) { var p = getPendingMonths(); p[m] = Date.now(); setPendingMonths(p); }
-        function clearPending(m) { var p = getPendingMonths(); delete p[m]; setPendingMonths(p); }
-
         function getCachedMonths() { try { return JSON.parse(localStorage.getItem('hrFarm_cached_months') || '[]'); } catch (e) { return []; } }
         function setCachedMonths(arr) { localStorage.setItem('hrFarm_cached_months', JSON.stringify(arr)); }
+        function getCachedMonth(m) { try { return JSON.parse(localStorage.getItem('hrFarm_cache_' + m) || '{}'); } catch (e) { return {}; } }
 
         async function initApp() {
-            updateSyncBar('syncing', 'Loading data from cloud...');
+            updateSyncBar('syncing', 'Syncing...');
             
-            // 1. Get list of all available months from cloud
-            var url = API_URL + '?action=getAllSavedMonths&idToken=' + encodeURIComponent(idToken);
-            var months = [];
-            try {
-                var res = await fetch(url);
-                var json = await res.json();
-                if (json.ok && json.months) {
-                    months = json.months;
-                    setCachedMonths(months);
-                }
-            } catch(e) {
-                console.warn("Could not fetch month list, falling back to cache.");
-                months = getCachedMonths();
-            }
-
-            // 2. Fetch data for every month and merge into LEDGER
-            LEDGER = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], dairyEmployees: [], agriEmployees: [], milkData: {} };
-            
-            for (var i = 0; i < months.length; i++) {
-                var m = months[i];
-                var mData = await loadMonthData(m);
-                if (mData.income) LEDGER.income = LEDGER.income.concat(mData.income);
-                if (mData.owner) LEDGER.owner = LEDGER.owner.concat(mData.owner);
-                if (mData.dairy) LEDGER.dairy = LEDGER.dairy.concat(mData.dairy);
-                if (mData.agri) LEDGER.agri = LEDGER.agri.concat(mData.agri);
-                if (mData.medicine) LEDGER.medicine = LEDGER.medicine.concat(mData.medicine);
-                if (mData.women) LEDGER.women = LEDGER.women.concat(mData.women);
-                
-                // Employees (keep latest state)
-                if (mData.dairyEmployees && mData.dairyEmployees.length > 0) LEDGER.dairyEmployees = mData.dairyEmployees;
-                if (mData.agriEmployees && mData.agriEmployees.length > 0) LEDGER.agriEmployees = mData.agriEmployees;
-                
-                // Milk Data
-                if (mData.milkData) {
-                    Object.keys(mData.milkData).forEach(function(c) {
-                        if (!LEDGER.milkData[c]) LEDGER.milkData[c] = [];
-                        LEDGER.milkData[c] = LEDGER.milkData[c].concat(mData.milkData[c]);
-                    });
-                }
-            }
-
-            // 3. Render everything
+            // 1. Instantly load from cache and render
+            var cachedMonths = getCachedMonths();
+            rebuildLedgerFromCache(cachedMonths);
             renderAllTables();
             renderMilk();
             renderEmployees();
             renderDashboard();
             updateLeaseDisplay();
             
-            updateSyncBar('online', 'Ready');
+            // 2. Fetch fresh list from cloud
+            try {
+                var url = API_URL + '?action=getAllSavedMonths&idToken=' + encodeURIComponent(idToken);
+                var res = await fetch(url);
+                var json = await res.json();
+                if (json.ok && json.months) {
+                    var cloudMonths = json.months;
+                    setCachedMonths(cloudMonths);
+                    
+                    // 3. Fetch missing months in parallel
+                    var fetchPromises = cloudMonths.map(function(m) {
+                        return loadMonthData(m);
+                    });
+                    await Promise.all(fetchPromises);
+                    
+                    // 4. Rebuild and re-render
+                    rebuildLedgerFromCache(cloudMonths);
+                    renderAllTables();
+                    renderMilk();
+                    renderEmployees();
+                    renderDashboard();
+                }
+                updateSyncBar('online', 'Ready');
+            } catch(err) {
+                console.error("Cloud sync failed, using cached data.", err);
+                updateSyncBar('offline', 'Offline (Using cache)');
+            }
             
             if (autoSyncTimer) clearInterval(autoSyncTimer);
             autoSyncTimer = setInterval(function () { if (navigator.onLine) flushPending(); }, 30000);
@@ -1419,21 +1402,53 @@
 
         async function loadMonthData(monthKey) {
             var cacheKey = 'hrFarm_cache_' + monthKey;
-            var cached = null;
-            try { cached = JSON.parse(localStorage.getItem(cacheKey)); } catch(e){}
-            
             var url = API_URL + '?action=getMonth&month=' + encodeURIComponent(monthKey) + '&idToken=' + encodeURIComponent(idToken);
             try {
                 var res = await fetch(url);
                 var json = await res.json();
-                if (json.ok) {
-                    var data = json.data || {};
-                    localStorage.setItem(cacheKey, JSON.stringify(data));
-                    return data;
+                if (json.ok && json.data) {
+                    localStorage.setItem(cacheKey, JSON.stringify(json.data));
+                    return json.data;
                 }
             } catch(e) { }
+            return getCachedMonth(monthKey);
+        }
+
+        function rebuildLedgerFromCache(months) {
+            LEDGER = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], dairyEmployees: [], agriEmployees: [], milkData: {} };
             
-            return cached || {};
+            months.forEach(function(m) {
+                var mData = getCachedMonth(m);
+                if (!mData || !Object.keys(mData).length) return;
+                
+                if (mData.income) LEDGER.income = LEDGER.income.concat(mData.income);
+                if (mData.owner) LEDGER.owner = LEDGER.owner.concat(mData.owner);
+                if (mData.dairy) LEDGER.dairy = LEDGER.dairy.concat(mData.dairy);
+                if (mData.agri) LEDGER.agri = LEDGER.agri.concat(mData.agri);
+                if (mData.medicine) LEDGER.medicine = LEDGER.medicine.concat(mData.medicine);
+                if (mData.women) LEDGER.women = LEDGER.women.concat(mData.women);
+                
+                // Add month to employees if it's missing
+                if (mData.dairyEmployees) {
+                    mData.dairyEmployees.forEach(function(e) { 
+                        if (!e.month) e.month = m; 
+                        LEDGER.dairyEmployees.push(e); 
+                    });
+                }
+                if (mData.agriEmployees) {
+                    mData.agriEmployees.forEach(function(e) { 
+                        if (!e.month) e.month = m; 
+                        LEDGER.agriEmployees.push(e); 
+                    });
+                }
+                
+                if (mData.milkData) {
+                    Object.keys(mData.milkData).forEach(function(c) {
+                        if (!LEDGER.milkData[c]) LEDGER.milkData[c] = [];
+                        LEDGER.milkData[c] = LEDGER.milkData[c].concat(mData.milkData[c]);
+                    });
+                }
+            });
         }
 
         async function refreshFromCloud() {
@@ -1467,52 +1482,55 @@
         async function forceSync() {
             updateSyncBar('syncing', 'Saving...');
             
-            // Extract all rows from DOM
             var fullData = extractAllData();
             
-            // We need to merge with existing LEDGER data for other milk companies
-            // because extractAllData only gets the active company's milk table
+            // Merge milk companies
             Object.keys(LEDGER.milkData).forEach(function(c) {
                 if (!fullData.milkData[c]) {
                     fullData.milkData[c] = LEDGER.milkData[c];
                 }
             });
 
-            // Group by Month
-            var grouped = {}; // { '2026-07': { income: [], dairy: [], ... } }
+            var grouped = {}; 
             
             function getMonthKey(dStr) {
                 var d = toStorageDate(dStr);
-                if (!d) return new Date().toISOString().slice(0,7); // fallback to current month
+                if (!d) return new Date().toISOString().slice(0,7); 
                 return d.substring(0, 7);
             }
 
-            // Initialize groups
             function addToGroup(month, key, row) {
-                if (!grouped[month]) grouped[month] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: fullData.dairyEmployees, agriEmployees: fullData.agriEmployees };
+                if (!grouped[month]) grouped[month] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: [], agriEmployees: [] };
                 grouped[month][key].push(row);
             }
 
-            // Distribute rows
             fullData.income.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'income', r); });
             fullData.owner.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'owner', r); });
             fullData.dairy.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'dairy', r); });
             fullData.agri.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'agri', r); });
             fullData.medicine.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'medicine', r); });
-            fullData.women.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'women', r); }); // Women might not have dates, default to current month
+            fullData.women.forEach(function(r){ 
+                var m = r.date ? getMonthKey(r.date) : new Date().toISOString().slice(0,7);
+                addToGroup(m, 'women', r); 
+            });
 
-            // Distribute Milk
             Object.keys(fullData.milkData).forEach(function(c) {
                 fullData.milkData[c].forEach(function(r) {
                     if (!r.date) return;
                     var m = getMonthKey(r.date);
-                    if (!grouped[m]) grouped[m] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: fullData.dairyEmployees, agriEmployees: fullData.agriEmployees };
+                    if (!grouped[m]) grouped[m] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: [], agriEmployees: [] };
                     if (!grouped[m].milkData[c]) grouped[m].milkData[c] = [];
                     grouped[m].milkData[c].push(r);
                 });
             });
 
-            // Save each month
+            fullData.dairyEmployees.forEach(function(r){ 
+                if(r.month) addToGroup(r.month, 'dairyEmployees', r);
+            });
+            fullData.agriEmployees.forEach(function(r){ 
+                if(r.month) addToGroup(r.month, 'agriEmployees', r);
+            });
+
             var monthsToSave = Object.keys(grouped);
             if(monthsToSave.length === 0) {
                 updateSyncBar('online', 'Saved (No data)');
@@ -1525,7 +1543,7 @@
                     var m = monthsToSave[i];
                     await saveMonthToCloud(m, grouped[m]);
                 }
-                // Update local cache for months
+                // Update cache
                 var cached = getCachedMonths();
                 monthsToSave.forEach(function(m){ if(cached.indexOf(m) < 0) cached.push(m); });
                 setCachedMonths(cached);
@@ -1533,9 +1551,12 @@
                 localStorage.setItem('hrFarm_lastSave', 'Saved ' + new Date().toLocaleTimeString());
                 updateSyncBar('online', 'Saved');
                 toast('Saved successfully', 'ok');
+                
+                // Reload to merge fresh data
+                await initApp();
             } catch(err) {
                 updateSyncBar('offline', 'Error saving');
-                toast('Error saving data', 'err');
+                toast('Error saving data: ' + err.message, 'err');
             }
         }
 
@@ -1551,11 +1572,9 @@
         }
 
         function flushPending() {
-            // Simplified flush: if there are pending months, try saving the whole ledger again
-            var pending = getPendingMonths();
-            if (Object.keys(pending).length > 0) {
-                forceSync();
-            }
+            // Since we now save everything in one batch, we just call forceSync if there are changes
+            // For a more robust system, you'd track dirty state. Here we just check if the user clicked save.
+            // To keep it simple, we rely on the user clicking Save. 
         }
 
         // ============================================================
@@ -1702,7 +1721,7 @@
             toDate.setHours(23,59,59);
 
             $(tbodyId).querySelectorAll('tr').forEach(function(tr) {
-                var dStr = tr.cells[1].querySelector('input').value; // Date is usually cell 1
+                var dStr = tr.cells[1].querySelector('input') ? tr.cells[1].querySelector('input').value : ''; 
                 if(!dStr) { tr.style.display = 'none'; return; }
                 
                 var parts = dStr.split('/');
@@ -1717,6 +1736,15 @@
             });
         }
 
+        function filterEmployees() {
+            var filterMonth = $('filter-emp-month').value;
+            $('empBody').querySelectorAll('tr').forEach(function(tr) {
+                if(!filterMonth) { tr.style.display = ''; return; }
+                var rowMonth = tr.cells[1].querySelector('input').value;
+                tr.style.display = (rowMonth === filterMonth) ? '' : 'none';
+            });
+        }
+
         function clearTabFilter(fromId, toId, tbodyId) {
             $(fromId).value = '';
             $(toId).value = '';
@@ -1728,13 +1756,12 @@
             var rows = Array.from(tbody.querySelectorAll('tr'));
             
             rows.sort(function(a, b) {
-                var dateA = a.cells[1].querySelector('input').value || '';
-                var dateB = b.cells[1].querySelector('input').value || '';
+                var dateA = a.cells[1].querySelector('input') ? a.cells[1].querySelector('input').value : '';
+                var dateB = b.cells[1].querySelector('input') ? b.cells[1].querySelector('input').value : '';
                 
-                // Convert DD/MM/YYYY to YYYYMMDD for sorting
                 var pA = dateA.split('/'); var pB = dateB.split('/');
-                var sortA = pA.length===3 ? pA[2]+pA[1]+pA[0] : '00000000';
-                var sortB = pB.length===3 ? pB[2]+pB[1]+pB[0] : '00000000';
+                var sortA = pA.length===3 ? pA[2]+pA[1]+pA[0] : (dateA ? dateA : '00000000');
+                var sortB = pB.length===3 ? pB[2]+pB[1]+pB[0] : (dateB ? dateB : '00000000');
                 
                 return sortB.localeCompare(sortA); // Descending
             });
@@ -1822,9 +1849,22 @@
             var rows = [];
             $('empBody').querySelectorAll('tr').forEach(function (tr) {
                 if (!tr.querySelector('.rownum')) return;
-                var name = tr.cells[1].querySelector('input').value.trim();
+                var month = tr.cells[1].querySelector('input').value || new Date().toISOString().slice(0,7);
+                var name = tr.cells[2].querySelector('input').value.trim();
                 if (!name) return;
-                rows.push({ name: name, designation: tr.cells[2].querySelector('select').value, phone: tr.cells[3].querySelector('input').value, cnic: tr.cells[4].querySelector('input').value, address: tr.cells[5].querySelector('input').value, basic: tr.cells[6].querySelector('input').value, bonus: tr.cells[7].querySelector('input').value, deduction: tr.cells[8].querySelector('input').value, advance: tr.cells[9].querySelector('input').value, net: tr.cells[10].querySelector('input').value });
+                rows.push({ 
+                    month: month, 
+                    name: name, 
+                    designation: tr.cells[3].querySelector('select').value, 
+                    phone: tr.cells[4].querySelector('input').value, 
+                    cnic: tr.cells[5].querySelector('input').value, 
+                    address: tr.cells[6].querySelector('input').value, 
+                    basic: tr.cells[7].querySelector('input').value, 
+                    bonus: tr.cells[8].querySelector('input').value, 
+                    deduction: tr.cells[9].querySelector('input').value, 
+                    advance: tr.cells[10].querySelector('input').value, 
+                    net: tr.cells[11].querySelector('input').value 
+                });
             });
             return rows;
         }
@@ -1929,7 +1969,6 @@
                     if (r > 0) rates.push(r);
                 }
             });
-            // Also check ledger for any historical rates (simplified)
             if (rates.length === 0) return 0;
             return rates[rates.length - 1];
         }
@@ -2198,7 +2237,11 @@
             var tr = document.createElement('tr');
             var designations = ['Milker', 'TMR', 'Guard', 'Night duty', 'Cleaner', 'Feeder', 'Cook', 'Helper', 'Driver', 'Manager', 'Supervisor', 'Tractor Driver', 'Laborer', 'Other'];
             var desOpts = [''].concat(designations).map(function (d) { return '<option value="' + d + '" ' + (data.designation === d ? 'selected' : '') + '>' + (d || 'Designation') + '</option>'; }).join('');
+            
+            var monthVal = data.month || new Date().toISOString().slice(0,7);
+            
             tr.innerHTML = '<td class="rownum"></td>' +
+                '<td><input type="month" value="' + monthVal + '" onchange="scheduleAutoSave()"></td>' +
                 '<td>' + descCell(data.name || '', 'Name') + '</td>' +
                 '<td><select onchange="calculateEmpTotals();scheduleAutoSave()">' + desOpts + '</select></td>' +
                 '<td><input type="tel" value="' + (data.phone || '') + '" placeholder="0300-0000000" oninput="scheduleAutoSave()"></td>' +
@@ -2214,11 +2257,11 @@
         }
         function calcEmpRow(input) {
             var tr = input.closest('tr');
-            var basic = parseFloat(tr.cells[6].querySelector('input').value) || 0;
-            var bonus = parseFloat(tr.cells[7].querySelector('input').value) || 0;
-            var ded = parseFloat(tr.cells[8].querySelector('input').value) || 0;
-            var adv = parseFloat(tr.cells[9].querySelector('input').value) || 0;
-            tr.cells[10].querySelector('input').value = (basic + bonus - ded - adv);
+            var basic = parseFloat(tr.cells[7].querySelector('input').value) || 0;
+            var bonus = parseFloat(tr.cells[8].querySelector('input').value) || 0;
+            var ded = parseFloat(tr.cells[9].querySelector('input').value) || 0;
+            var adv = parseFloat(tr.cells[10].querySelector('input').value) || 0;
+            tr.cells[11].querySelector('input').value = (basic + bonus - ded - adv);
             calculateEmpTotals();
             scheduleAutoSave();
         }
@@ -2233,14 +2276,14 @@
             var count = 0, basic = 0, bonus = 0, ded = 0, adv = 0, net = 0;
             $('empBody').querySelectorAll('tr').forEach(function (tr) {
                 if (!tr.querySelector('.rownum')) return;
-                var name = tr.cells[1].querySelector('input').value.trim();
+                var name = tr.cells[2].querySelector('input').value.trim();
                 if (!name) return;
                 count++;
-                basic += parseFloat(tr.cells[6].querySelector('input').value) || 0;
-                bonus += parseFloat(tr.cells[7].querySelector('input').value) || 0;
-                ded += parseFloat(tr.cells[8].querySelector('input').value) || 0;
-                adv += parseFloat(tr.cells[9].querySelector('input').value) || 0;
-                net += parseFloat(tr.cells[10].querySelector('input').value) || 0;
+                basic += parseFloat(tr.cells[7].querySelector('input').value) || 0;
+                bonus += parseFloat(tr.cells[8].querySelector('input').value) || 0;
+                ded += parseFloat(tr.cells[9].querySelector('input').value) || 0;
+                adv += parseFloat(tr.cells[10].querySelector('input').value) || 0;
+                net += parseFloat(tr.cells[11].querySelector('input').value) || 0;
             });
             $('empSummary').innerHTML = '<div class="sum-item dc-orange">Count<span class="v">' + count + '</span></div><div class="sum-item dc-green">Basic<span class="v">' + fmt(basic) + '</span></div><div class="sum-item dc-blue">Bonus<span class="v">' + fmt(bonus) + '</span></div><div class="sum-item dc-red">Deductions<span class="v">' + fmt(ded) + '</span></div><div class="sum-item dc-purple">Net<span class="v">' + fmt(net) + '</span></div>';
         }
@@ -2354,7 +2397,7 @@
 
             var dairyCats = {};
             LEDGER.dairy.forEach(function (r) {
-                if (!months.includes(r.date.substring(0,7))) return;
+                if (!r.date || !months.includes(r.date.substring(0,7))) return;
                 var cat = r.category || 'Other';
                 dairyCats[cat] = (dairyCats[cat] || 0) + (parseFloat(r.amount) || 0);
             });
@@ -2363,7 +2406,7 @@
 
             var agriCats = {};
             LEDGER.agri.forEach(function (r) {
-                if (!months.includes(r.date.substring(0,7))) return;
+                if (!r.date || !months.includes(r.date.substring(0,7))) return;
                 var cat = r.category || 'Other';
                 agriCats[cat] = (agriCats[cat] || 0) + (parseFloat(r.amount) || 0);
             });
