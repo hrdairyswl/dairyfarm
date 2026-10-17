@@ -2259,19 +2259,29 @@
         function computeMonthSummary(monthKey) {
             var data = getCachedMonth(monthKey);
             var milk = 0, animal = 0, agri = 0, income = 0, dairy = 0, agriExp = 0, med = 0, women = 0;
+
+            // Only count rows where the date matches the requested month
+            function dateMatches(d) {
+                if (!d) return true;
+                return d.startsWith(monthKey);
+            }
+
             (data.income || []).forEach(function (r) {
+                if (!dateMatches(r.date)) return;
                 var a = parseFloat(r.amount) || 0; income += a;
                 if (r.source === 'Milk') milk += a;
                 else if (r.source === 'Animal') animal += a;
                 else if (r.source === 'Agri') agri += a;
             });
-            (data.dairy || []).forEach(function (r) { dairy += parseFloat(r.amount) || 0; });
-            (data.agri || []).forEach(function (r) { agriExp += parseFloat(r.amount) || 0; });
-            (data.medicine || []).forEach(function (r) { med += parseFloat(r.amount) || 0; });
-            (data.women || []).forEach(function (r) { women += parseFloat(r.amount) || 0; });
+            (data.dairy || []).forEach(function (r) { if (dateMatches(r.date)) dairy += parseFloat(r.amount) || 0; });
+            (data.agri || []).forEach(function (r) { if (dateMatches(r.date)) agriExp += parseFloat(r.amount) || 0; });
+            (data.medicine || []).forEach(function (r) { if (dateMatches(r.date)) med += parseFloat(r.amount) || 0; });
+            (data.women || []).forEach(function (r) { if (dateMatches(r.date)) women += parseFloat(r.amount) || 0; });
+            
             if (data.milkData) {
                 Object.keys(data.milkData).forEach(function (k) {
                     (data.milkData[k] || []).forEach(function (r) {
+                        if (!dateMatches(r.date)) return;
                         var a = parseFloat(r.amount) || 0; milk += a; income += a;
                     });
                 });
