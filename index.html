@@ -2401,124 +2401,21 @@
                 html += '</tbody></table>';
                 tbl.innerHTML = html;
             }
-        }
 
-        var months = getSelectedDashMonths();
-        var chips = $('dashMonthsChips');
-        chips.innerHTML = months.map(function (m) { return '<span class="role-badge" style="background:#e2e8f0;color:#2d3748;padding:4px 10px">' + getMonthName(m) + '</span>'; }).join('');
-        var leaseAcres = parseFloat(localStorage.getItem('hrFarm_leaseAcres') || '65');
-        var leaseRate = parseFloat(localStorage.getItem('hrFarm_leaseRate') || '150000');
-        var leaseMonthly = (leaseAcres * leaseRate) / 12;
-
-        var T = { milk: 0, animal: 0, agri: 0, income: 0, dairy: 0, agriExp: 0, med: 0, women: 0, fee: 0, netIncome: 0, totalExp: 0 };
-        var perMonth = [];
-        months.forEach(function (m) {
-            var s = computeMonthSummary(m);
-            Object.keys(T).forEach(function (k) { T[k] += s[k]; });
-            perMonth.push({ month: m, milk: s.milk, animal: s.animal, agri: s.agri, income: s.income, dairy: s.dairy, agriExp: s.agriExp, med: s.med, women: s.women, fee: s.fee, netIncome: s.netIncome, totalExp: s.totalExp, lease: leaseMonthly, profit: s.netIncome - s.totalExp - leaseMonthly });
-        });
-        var totalExpWithLease = T.totalExp + leaseMonthly * months.length;
-        var profit = T.netIncome - totalExpWithLease;
-
-        $('dMilkIncome').textContent = fmt(T.milk);
-        $('dAnimalIncome').textContent = fmt(T.animal);
-        $('dAgriIncome').textContent = fmt(T.agri);
-        $('dTotalIncome').textContent = fmt(T.income);
-        var pctOf = function (v) { return T.income ? '(' + ((v / T.income) * 100).toFixed(1) + '%)' : ''; };
-        $('dMilkIncomePct').textContent = pctOf(T.milk);
-        $('dAnimalIncomePct').textContent = pctOf(T.animal);
-        $('dAgriIncomePct').textContent = pctOf(T.agri);
-
-        $('dMilkBase').textContent = fmt(T.milk);
-        $('dMilkFee').textContent = fmt(T.fee);
-        $('dNetIncome').textContent = fmt(T.netIncome);
-
-        $('dDairyExp').textContent = fmt(T.dairy);
-        $('dAgriExp').textContent = fmt(T.agriExp);
-        $('dMedExp').textContent = fmt(T.med);
-        $('dWomenExp').textContent = fmt(T.women);
-        $('dTotalExp').textContent = fmt(T.totalExp);
-        var pctExp = function (v) { return T.totalExp ? '(' + ((v / T.totalExp) * 100).toFixed(1) + '%)' : ''; };
-        $('dDairyExpPct').textContent = pctExp(T.dairy);
-        $('dAgriExpPct').textContent = pctExp(T.agriExp);
-        $('dMedExpPct').textContent = pctExp(T.med);
-        $('dWomenExpPct').textContent = pctExp(T.women);
-
-        var dairyCats = {};
-        months.forEach(function (m) {
-            (getCachedMonth(m).dairy || []).forEach(function (r) {
-                var cat = r.category || 'Other';
-                dairyCats[cat] = (dairyCats[cat] || 0) + (parseFloat(r.amount) || 0);
-            });
-        });
-        var dcHtml = Object.keys(dairyCats).map(function (k) { return '<div>' + esc(k) + ': <b>' + fmt(dairyCats[k]) + '</b></div>'; }).join('');
-        $('dDairyBreakdown').innerHTML = dcHtml || '<div style="color:#a0aec0">No entries</div>';
-
-        var agriCats = {};
-        months.forEach(function (m) {
-            (getCachedMonth(m).agri || []).forEach(function (r) {
-                var cat = r.category || 'Other';
-                agriCats[cat] = (agriCats[cat] || 0) + (parseFloat(r.amount) || 0);
-            });
-        });
-        var acHtml = Object.keys(agriCats).map(function (k) { return '<div>' + esc(k) + ': <b>' + fmt(agriCats[k]) + '</b></div>'; }).join('');
-        $('dAgriBreakdown').innerHTML = acHtml || '<div style="color:#a0aec0">No entries</div>';
-
-        $('dNetInc2').textContent = fmt(T.netIncome);
-        $('dTotalExpLease').textContent = fmt(totalExpWithLease);
-        $('dProfit').textContent = fmt(profit);
-        var profitCard = $('dProfitCard');
-        if (profit >= 0) { profitCard.className = 'dash-card dc-profit dc-highlight'; }
-        else { profitCard.className = 'dash-card dc-loss dc-highlight'; }
-
-        var wc = $('dWhatChanged');
-        var half = Math.floor(months.length / 2);
-        var recent = months.slice(-half);
-        var older = months.slice(0, half);
-        var sumOver = function (list, key) { return list.reduce(function (s, m) { return s + computeMonthSummary(m)[key]; }, 0); };
-        var arrow = function (pct) {
-            if (!isFinite(pct) || pct === 0) return '<span style="color:#718096">&mdash;</span>';
-            var dir = pct > 0 ? '&#9650;' : '&#9660;';
-            var col = pct > 0 ? '#38a169' : '#e53e3e';
-            return '<span style="color:' + col + ';font-weight:700">' + dir + ' ' + Math.abs(pct).toFixed(1) + '%</span>';
-        };
-        var makePill = function (label, olderVal, recentVal) {
-            var pct = olderVal ? ((recentVal - olderVal) / Math.abs(olderVal)) * 100 : 0;
-            return '<div style="background:#f7fafc;padding:6px 12px;border-radius:20px;font-size:12px;border:1px solid var(--line)"><b>' + label + ':</b> ' + fmt(recentVal) + ' ' + arrow(pct) + '</div>';
-        };
-        if (half > 0) {
-            wc.innerHTML = makePill('Income', sumOver(older, 'income'), sumOver(recent, 'income')) + makePill('Dairy', sumOver(older, 'dairy'), sumOver(recent, 'dairy')) + makePill('Agri', sumOver(older, 'agriExp'), sumOver(recent, 'agriExp')) + makePill('Med', sumOver(older, 'med'), sumOver(recent, 'med')) + makePill('Women', sumOver(older, 'women'), sumOver(recent, 'women'));
-        } else {
-            wc.innerHTML = '<span style="color:#a0aec0;font-size:12px">Select more than one month to see trends.</span>';
-        }
-
-        var tbl = $('dCompareTable');
-        if (!perMonth.length) { tbl.innerHTML = '<p style="padding:20px;text-align:center;color:#a0aec0">No months selected</p>'; }
-        else {
-            var html = '<table><thead><tr><th>Month</th><th>Milk</th><th>Animal</th><th>Agri Inc</th><th>Total Inc</th><th>Fee</th><th>Net Inc</th><th>Dairy</th><th>Agri Exp</th><th>Med</th><th>Women</th><th>Lease</th><th>Profit</th></tr></thead><tbody>';
-            perMonth.forEach(function (r) {
-                html += '<tr><td><b>' + getMonthName(r.month) + '</b></td><td>' + fmt(r.milk) + '</td><td>' + fmt(r.animal) + '</td><td>' + fmt(r.agri) + '</td><td><b>' + fmt(r.income) + '</b></td><td>' + fmt(r.fee) + '</td><td><b>' + fmt(r.netIncome) + '</b></td><td>' + fmt(r.dairy) + '</td><td>' + fmt(r.agriExp) + '</td><td>' + fmt(r.med) + '</td><td>' + fmt(r.women) + '</td><td>' + fmt(r.lease) + '</td><td style="color:' + (r.profit >= 0 ? '#22543d' : '#742a2a') + ';font-weight:700">' + (r.profit >= 0 ? '+' : '') + fmt(r.profit) + '</td></tr>';
-            });
-            html += '<tr style="background:#fef08a;font-weight:700"><td>TOTAL (' + months.length + ')</td><td>' + fmt(T.milk) + '</td><td>' + fmt(T.animal) + '</td><td>' + fmt(T.agri) + '</td><td>' + fmt(T.income) + '</td><td>' + fmt(T.fee) + '</td><td>' + fmt(T.netIncome) + '</td><td>' + fmt(T.dairy) + '</td><td>' + fmt(T.agriExp) + '</td><td>' + fmt(T.med) + '</td><td>' + fmt(T.women) + '</td><td>' + fmt(leaseMonthly * months.length) + '</td><td>' + (profit >= 0 ? '+' : '') + fmt(profit) + '</td></tr>';
-            html += '</tbody></table>';
-            tbl.innerHTML = html;
-        }
-
-        var ytdYear = (months[0] || currentMonth).split('-')[0];
-        var ytd = { income: 0, dairy: 0, agriExp: 0, med: 0, women: 0 };
-        for (var m = 1; m <= 12; m++) {
-            var k = ytdYear + '-' + String(m).padStart(2, '0');
-            var cd = getCachedMonth(k);
-            if (cd && Object.keys(cd).length) {
-                var s = computeMonthSummary(k);
-                ytd.income += s.income; ytd.dairy += s.dairy; ytd.agriExp += s.agriExp;
-                ytd.med += s.med; ytd.women += s.women;
+            var ytdYear = (months[0] || currentMonth).split('-')[0];
+            var ytd = { income: 0, dairy: 0, agriExp: 0, med: 0, women: 0 };
+            for (var m = 1; m <= 12; m++) {
+                var k = ytdYear + '-' + String(m).padStart(2, '0');
+                var cd = getCachedMonth(k);
+                if (cd && Object.keys(cd).length) {
+                    var s = computeMonthSummary(k);
+                    ytd.income += s.income; ytd.dairy += s.dairy; ytd.agriExp += s.agriExp;
+                    ytd.med += s.med; ytd.women += s.women;
+                }
             }
+            var ytdExp = ytd.dairy + ytd.agriExp + ytd.med + ytd.women;
+            $('dYTD').innerHTML = '<div class="dash-card dc-green"><div class="lbl">YTD ' + ytdYear + ' Income</div><div class="val">' + fmt(ytd.income) + '</div></div><div class="dash-card dc-red"><div class="lbl">YTD Expenses</div><div class="val">' + fmt(ytdExp) + '</div></div><div class="dash-card dc-navy"><div class="lbl">YTD Profit (before lease)</div><div class="val">' + fmt(ytd.income - ytdExp) + '</div></div>';
         }
-        var ytdExp = ytd.dairy + ytd.agriExp + ytd.med + ytd.women;
-        $('dYTD').innerHTML = '<div class="dash-card dc-green"><div class="lbl">YTD ' + ytdYear + ' Income</div><div class="val">' + fmt(ytd.income) + '</div></div><div class="dash-card dc-red"><div class="lbl">YTD Expenses</div><div class="val">' + fmt(ytdExp) + '</div></div><div class="dash-card dc-navy"><div class="lbl">YTD Profit (before lease)</div><div class="val">' + fmt(ytd.income - ytdExp) + '</div></div>';
-    
-
 
         function saveLeaseSettingsFromUI() {
             var a = parseFloat($('leaseAcres').value) || 0;
