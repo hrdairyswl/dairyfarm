@@ -805,11 +805,7 @@
             <h1>HR Dairy Farm</h1>
             <div class="sub">Management System</div>
             <div class="signin-divider"></div>
-            <div id="g_id_onload"
-                data-client_id="755350224152-oaioesm46kbcl9tok4gt3s8scll5rj51.apps.googleusercontent.com"
-                data-auto_prompt="false"></div>
-            <div class="g_id_signin" data-type="standard" data-size="large" data-theme="outline" data-text="signin_with"
-                data-shape="rectangular" data-logo_alignment="left"></div>
+                        <div id="googleButton"></div>
             <div id="signinError"></div>
             <div class="signin-foot">Authorised accounts only</div>
         </div>
@@ -2548,8 +2544,10 @@
             next();
         }
 
-        var hrClickCount = 0, hrClickTimer = null;
-        document.addEventListener('DOMContentLoaded', function () {
+                var hrClickCount = 0, hrClickTimer = null;
+        
+        window.addEventListener('load', function () {
+            // 1. Setup Easter Egg
             var mono = $('hrMono');
             if (mono) {
                 mono.addEventListener('click', function () {
@@ -2562,6 +2560,19 @@
             var sp = $('starkPanel');
             if (sp) sp.addEventListener('click', function () { $('starkPanel').classList.remove('active'); });
 
+            // 2. Setup Google Sign In
+            if (typeof google !== 'undefined' && google.accounts) {
+                google.accounts.id.initialize({
+                    client_id: CLIENT_ID,
+                    callback: handleCredentialResponse
+                });
+                google.accounts.id.renderButton(
+                    $('googleButton'),
+                    { theme: "outline", size: "large", text: "signin_with", shape: "rectangular", logo_alignment: "left", width: 300 }
+                );
+            }
+
+            // 3. Auto-login if already signed in
             var cachedUser = localStorage.getItem('hrFarm_user');
             var cachedToken = localStorage.getItem('hrFarm_token');
             if (cachedUser && cachedToken) {
@@ -2574,11 +2585,7 @@
                             if (d.ok) { showApp(); }
                             else { localStorage.removeItem('hrFarm_user'); localStorage.removeItem('hrFarm_token'); }
                         })
-                        .catch(function () { /* leave sign-in screen */ });
+                        .catch(function () { });
                 } catch (e) { }
             }
         });
-    </script>
-</body>
-
-</html>
