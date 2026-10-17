@@ -805,7 +805,7 @@
             <h1>HR Dairy Farm</h1>
             <div class="sub">Management System</div>
             <div class="signin-divider"></div>
-                        <div id="googleButton"></div>
+            <div id="googleButton"></div>
             <div id="signinError"></div>
             <div class="signin-foot">Authorised accounts only</div>
         </div>
@@ -1409,10 +1409,9 @@
 
         function changeGlobalMonth(val) {
             if (!val) return;
-            persistLocal(); // Save current before switching
+            persistLocal();
             currentMonth = val;
             localStorage.setItem('hrFarm_month', currentMonth);
-            // Show loading state
             document.getElementById('syncText').textContent = 'Loading ' + val + '...';
             loadAndRenderAll();
         }
@@ -1859,7 +1858,6 @@
             var amount = q * r;
             tr.cells[6].querySelector('input').value = amount > 0 ? amount.toFixed(2) : '';
 
-            // Calculate Prev Rate
             var medName = (tr.cells[3].querySelector('input').value || '').trim();
             if (medName) {
                 var prevRate = getPrevRateForMed(medName);
@@ -1903,7 +1901,7 @@
                 } catch (e) { }
             }
             if (rates.length === 0) return 0;
-            return rates[rates.length - 1]; // return the most recent one
+            return rates[rates.length - 1];
         }
         function deleteMedRow(btn) {
             if (!confirm('Delete this row?')) return;
@@ -2287,12 +2285,11 @@
         async function renderDashboard() {
             var months = getSelectedDashMonths();
 
-            // Fetch any months that aren't in local cache yet
             for (var i = 0; i < months.length; i++) {
                 var m = months[i];
                 var cached = getCachedMonth(m);
                 if (!cached || !Object.keys(cached).length) {
-                    await loadMonth(m); // fetch from cloud
+                    await loadMonth(m);
                 }
             }
 
@@ -2544,10 +2541,8 @@
             next();
         }
 
-                var hrClickCount = 0, hrClickTimer = null;
-        
+        var hrClickCount = 0, hrClickTimer = null;
         window.addEventListener('load', function () {
-            // 1. Setup Easter Egg
             var mono = $('hrMono');
             if (mono) {
                 mono.addEventListener('click', function () {
@@ -2560,7 +2555,6 @@
             var sp = $('starkPanel');
             if (sp) sp.addEventListener('click', function () { $('starkPanel').classList.remove('active'); });
 
-            // 2. Setup Google Sign In
             if (typeof google !== 'undefined' && google.accounts) {
                 google.accounts.id.initialize({
                     client_id: CLIENT_ID,
@@ -2572,7 +2566,6 @@
                 );
             }
 
-            // 3. Auto-login if already signed in
             var cachedUser = localStorage.getItem('hrFarm_user');
             var cachedToken = localStorage.getItem('hrFarm_token');
             if (cachedUser && cachedToken) {
@@ -2589,3 +2582,7 @@
                 } catch (e) { }
             }
         });
+    </script>
+</body>
+
+</html>
