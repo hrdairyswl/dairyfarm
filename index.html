@@ -1305,87 +1305,11 @@
             }).finally(() => clearTimeout(id));
         }
 
-        // Local Auto-Save
-        function scheduleAutoSave() {
-            if (saveTimer) clearTimeout(saveTimer);
-            saveTimer = setTimeout(function() {
-                saveToLocalCache();
-            }, 1000);
-        }
-
-        function saveToLocalCache() {
-            // Extract all DOM data, group by month, save to local cache
-            var fullData = extractAllData();
-            Object.keys(LEDGER.milkData).forEach(function(c) {
-                if (!fullData.milkData[c]) fullData.milkData[c] = LEDGER.milkData[c];
-            });
-
-            var grouped = {};
-            function getMonthKey(dStr) {
-                var d = toStorageDate(dStr);
-                return d ? d.substring(0, 7) : new Date().toISOString().slice(0,7);
-            }
-            function addToGroup(month, key, row) {
-                if (!grouped[month]) grouped[month] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: [], agriEmployees: [] };
-                grouped[month][key].push(row);
-            }
-
-            fullData.income.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'income', r); });
-            fullData.owner.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'owner', r); });
-            fullData.dairy.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'dairy', r); });
-            fullData.agri.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'agri', r); });
-            fullData.medicine.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'medicine', r); });
-            fullData.women.forEach(function(r){ 
-                var m = r.date ? getMonthKey(r.date) : new Date().toISOString().slice(0,7);
-                addToGroup(m, 'women', r); 
-            });
-            Object.keys(fullData.milkData).forEach(function(c) {
-                fullData.milkData[c].forEach(function(r) {
-                    if (!r.date) return;
-                    var m = getMonthKey(r.date);
-                    if (!grouped[m]) grouped[m] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: [], agriEmployees: [] };
-                    if (!grouped[m].milkData[c]) grouped[m].milkData[c] = [];
-                    grouped[m].milkData[c].push(r);
-                });
-            });
-            fullData.dairyEmployees.forEach(function(r){ if(r.month) addToGroup(r.month, 'dairyEmployees', r); });
-            fullData.agriEmployees.forEach(function(r){ if(r.month) addToGroup(r.month, 'agriEmployees', r); });
-
-            // Save grouped data to localStorage
-            var cached = getCachedMonths();
-            Object.keys(grouped).forEach(function(m) {
-                localStorage.setItem('hrFarm_cache_' + m, JSON.stringify(grouped[m]));
-                if (cached.indexOf(m) < 0) cached.push(m);
-            });
-            setCachedMonths(cached);
-        }
-
-        // Token Expiry Check
-        function checkTokenExpiry() {
-            if (!idToken) return;
-            try {
-                var payload = JSON.parse(atob(idToken.split('.')[1]));
-                var exp = payload.exp * 1000;
-                var diff = exp - Date.now();
-                if (diff <= 0) {
-                    // Token expired
-                    signOut();
-                } else if (diff < 5 * 60 * 1000) {
-                    // Less than 5 mins left
-                    if (!window.expiryWarningShown) {
-                        alert("⚠️ Important: Your login session will expire in 5 minutes. Please save your work, click 'Sign out', and sign in again to avoid losing data.");
-                        window.expiryWarningShown = true;
-                    }
-                }
-            } catch(e){}
-        }
-
         // ============================================================
         // AUTHENTICATION
         // ============================================================
         function handleCredentialResponse(response) {
             idToken = response.credential;
-            window.expiryWarningShown = false;
             try {
                 var payload = JSON.parse(atob(response.credential.split('.')[1]));
                 fetchUserInfo(payload.email);
@@ -1421,10 +1345,7 @@
             var roleEl = $('userRole');
             roleEl.textContent = currentUser.role;
             roleEl.className = 'role-badge role-' + currentUser.role;
-            initApp(); // Load data
-            
-            // Start token checker
-            setInterval(checkTokenExpiry, 60000); // check every minute
+            initApp(); 
         }
 
         function signOut() {
@@ -1481,14 +1402,12 @@
                     renderEmployees();
                     renderDashboard();
                 }
-                updateSyncBar('online', 'Ready');
             } catch(err) {
                 console.warn("Cloud sync failed or timed out. Using cache.", err);
-                updateSyncBar('offline', 'Offline (Using cache)');
             } finally {
-                // ALWAYS resolve the syncing bar, no matter what
+                // ALWAYS resolve the syncing bar
                 updateSyncBar('online', 'Ready');
-                localStorage.setItem('hrFarm_lastSave', 'Sync Complete ' + new Date().toLocaleTimeString());
+                localStorage.setItem('hrFarm_lastSave', 'Synced ' + new Date().toLocaleTimeString());
             }
         }
 
@@ -1552,53 +1471,26 @@
         }
 
         // ============================================================
-        // SAVING LOGIC (Batch by Month)
+        // LOCAL AUTO-SAVE
         // ============================================================
-        function extractAllData() {
-            var data = {
-                income: extractTable('incomeBody', 'income'),
-                owner: extractTable('ownerBody', 'owner'),
-                dairy: extractTable('dairyBody', 'dairy'),
-                agri: extractTable('agriBody', 'agri'),
-                medicine: extractMedTable(),
-                women: extractWomenTable(),
-                dairyEmployees: (getEmpSection() === 'dairy') ? extractEmployees() : LEDGER.dairyEmployees,
-                agriEmployees: (getEmpSection() === 'agri') ? extractEmployees() : LEDGER.agriEmployees,
-                milkData: {}
-            };
-            var activeCompany = $('milkCompany').value;
-            if (activeCompany) {
-                data.milkData[activeCompany] = extractMilkTable();
-            }
-            return data;
+        function scheduleAutoSave() {
+            if (saveTimer) clearTimeout(saveTimer);
+            saveTimer = setTimeout(function() {
+                persistLocal();
+            }, 1000);
         }
 
-        async function forceSync() {
-            if (isTokenExpired()) {
-                alert("Your session has expired. Please sign in again.");
-                signOut();
-                return;
-            }
-
-            updateSyncBar('syncing', 'Saving...');
-            
+        function persistLocal() {
             var fullData = extractAllData();
-            
-            // Merge milk companies
             Object.keys(LEDGER.milkData).forEach(function(c) {
-                if (!fullData.milkData[c]) {
-                    fullData.milkData[c] = LEDGER.milkData[c];
-                }
+                if (!fullData.milkData[c]) fullData.milkData[c] = LEDGER.milkData[c];
             });
 
-            var grouped = {}; 
-            
+            var grouped = {};
             function getMonthKey(dStr) {
                 var d = toStorageDate(dStr);
-                if (!d) return new Date().toISOString().slice(0,7); 
-                return d.substring(0, 7);
+                return d ? d.substring(0, 7) : new Date().toISOString().slice(0,7);
             }
-
             function addToGroup(month, key, row) {
                 if (!grouped[month]) grouped[month] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: [], agriEmployees: [] };
                 grouped[month][key].push(row);
@@ -1613,7 +1505,6 @@
                 var m = r.date ? getMonthKey(r.date) : new Date().toISOString().slice(0,7);
                 addToGroup(m, 'women', r); 
             });
-
             Object.keys(fullData.milkData).forEach(function(c) {
                 fullData.milkData[c].forEach(function(r) {
                     if (!r.date) return;
@@ -1623,18 +1514,98 @@
                     grouped[m].milkData[c].push(r);
                 });
             });
+            fullData.dairyEmployees.forEach(function(r){ if(r.month) addToGroup(r.month, 'dairyEmployees', r); });
+            fullData.agriEmployees.forEach(function(r){ if(r.month) addToGroup(r.month, 'agriEmployees', r); });
 
-            fullData.dairyEmployees.forEach(function(r){ 
-                if(r.month) addToGroup(r.month, 'dairyEmployees', r);
+            var cached = getCachedMonths();
+            Object.keys(grouped).forEach(function(m) {
+                localStorage.setItem('hrFarm_cache_' + m, JSON.stringify(grouped[m]));
+                if (cached.indexOf(m) < 0) cached.push(m);
             });
-            fullData.agriEmployees.forEach(function(r){ 
-                if(r.month) addToGroup(r.month, 'agriEmployees', r);
+            setCachedMonths(cached);
+            
+            // Update LEDGER in memory so UI stays in sync
+            rebuildLedgerFromCache(cached);
+        }
+
+        // ============================================================
+        // SAVING LOGIC (Batch by Month)
+        // ============================================================
+        function extractAllData() {
+            try {
+                var data = {
+                    income: extractTable('incomeBody', 'income'),
+                    owner: extractTable('ownerBody', 'owner'),
+                    dairy: extractTable('dairyBody', 'dairy'),
+                    agri: extractTable('agriBody', 'agri'),
+                    medicine: extractMedTable(),
+                    women: extractWomenTable(),
+                    dairyEmployees: (getEmpSection() === 'dairy') ? extractEmployees() : LEDGER.dairyEmployees,
+                    agriEmployees: (getEmpSection() === 'agri') ? extractEmployees() : LEDGER.agriEmployees,
+                    milkData: {}
+                };
+                var activeCompany = $('milkCompany').value;
+                if (activeCompany) {
+                    data.milkData[activeCompany] = extractMilkTable();
+                }
+                return data;
+            } catch(e) {
+                console.error("Extraction error:", e);
+                return { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], dairyEmployees: [], agriEmployees: [], milkData: {} };
+            }
+        }
+
+        async function forceSync() {
+            console.log("Save button clicked.");
+            if (isTokenExpired()) {
+                alert("Your session has expired. Please sign in again.");
+                signOut();
+                return;
+            }
+
+            updateSyncBar('syncing', 'Saving...');
+            
+            var fullData = extractAllData();
+            
+            Object.keys(LEDGER.milkData).forEach(function(c) {
+                if (!fullData.milkData[c]) fullData.milkData[c] = LEDGER.milkData[c];
             });
+
+            var grouped = {}; 
+            function getMonthKey(dStr) {
+                var d = toStorageDate(dStr);
+                if (!d) return new Date().toISOString().slice(0,7); 
+                return d.substring(0, 7);
+            }
+            function addToGroup(month, key, row) {
+                if (!grouped[month]) grouped[month] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: [], agriEmployees: [] };
+                grouped[month][key].push(row);
+            }
+
+            fullData.income.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'income', r); });
+            fullData.owner.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'owner', r); });
+            fullData.dairy.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'dairy', r); });
+            fullData.agri.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'agri', r); });
+            fullData.medicine.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'medicine', r); });
+            fullData.women.forEach(function(r){ 
+                var m = r.date ? getMonthKey(r.date) : new Date().toISOString().slice(0,7);
+                addToGroup(m, 'women', r); 
+            });
+            Object.keys(fullData.milkData).forEach(function(c) {
+                fullData.milkData[c].forEach(function(r) {
+                    if (!r.date) return;
+                    var m = getMonthKey(r.date);
+                    if (!grouped[m]) grouped[m] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: [], agriEmployees: [] };
+                    if (!grouped[m].milkData[c]) grouped[m].milkData[c] = [];
+                    grouped[m].milkData[c].push(r);
+                });
+            });
+            fullData.dairyEmployees.forEach(function(r){ if(r.month) addToGroup(r.month, 'dairyEmployees', r); });
+            fullData.agriEmployees.forEach(function(r){ if(r.month) addToGroup(r.month, 'agriEmployees', r); });
 
             var monthsToSave = Object.keys(grouped);
             if(monthsToSave.length === 0) {
                 updateSyncBar('online', 'Saved (No data)');
-                toast('No data to save', 'ok');
                 return;
             }
 
@@ -1643,19 +1614,25 @@
                     var m = monthsToSave[i];
                     await saveMonthToCloud(m, grouped[m]);
                 }
-                // Update cache
+                
+                // Update local cache exactly with what we just saved
                 var cached = getCachedMonths();
-                monthsToSave.forEach(function(m){ if(cached.indexOf(m) < 0) cached.push(m); });
+                monthsToSave.forEach(function(m){ 
+                    localStorage.setItem('hrFarm_cache_' + m, JSON.stringify(grouped[m]));
+                    if(cached.indexOf(m) < 0) cached.push(m); 
+                });
                 setCachedMonths(cached);
+                
+                // Update memory so dashboard reflects changes immediately
+                rebuildLedgerFromCache(getCachedMonths());
+                renderDashboard(); 
                 
                 localStorage.setItem('hrFarm_lastSave', 'Saved ' + new Date().toLocaleTimeString());
                 updateSyncBar('online', 'Saved');
                 toast('Saved successfully', 'ok');
-                
-                // Reload to merge fresh data
-                await initApp();
             } catch(err) {
-                updateSyncBar('offline', 'Error saving');
+                console.error("Save error:", err);
+                updateSyncBar('online', 'Save failed');
                 toast('Error saving data: ' + err.message, 'err');
             }
         }
@@ -1679,14 +1656,20 @@
             });
         }
 
-        function flushPending() {
-            // Since we now save everything in one batch, we just call forceSync if there are changes
+        // Token Expiry Check
+        function isTokenExpired() {
+            if (!idToken) return true;
+            try {
+                var payload = JSON.parse(atob(idToken.split('.')[1]));
+                return payload.exp * 1000 < Date.now();
+            } catch(e) { return true; }
         }
 
         // ============================================================
         // RENDERING & TABLES
         // ============================================================
         function switchTab(tabId, btn) {
+            persistLocal(); // Save current state before switching
             document.querySelectorAll('.tab-content').forEach(function (t) { t.classList.remove('active'); });
             document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
             $(tabId).classList.add('active');
@@ -1827,7 +1810,7 @@
             toDate.setHours(23,59,59);
 
             $(tbodyId).querySelectorAll('tr').forEach(function(tr) {
-                var dStr = tr.cells[1].querySelector('input') ? tr.cells[1].querySelector('input').value : ''; 
+                var dStr = tr.cells[1] && tr.cells[1].querySelector('input') ? tr.cells[1].querySelector('input').value : ''; 
                 if(!dStr) { tr.style.display = 'none'; return; }
                 
                 var parts = dStr.split('/');
@@ -1862,8 +1845,8 @@
             var rows = Array.from(tbody.querySelectorAll('tr'));
             
             rows.sort(function(a, b) {
-                var dateA = a.cells[1].querySelector('input') ? a.cells[1].querySelector('input').value : '';
-                var dateB = b.cells[1].querySelector('input') ? b.cells[1].querySelector('input').value : '';
+                var dateA = a.cells[1] && a.cells[1].querySelector('input') ? a.cells[1].querySelector('input').value : '';
+                var dateB = b.cells[1] && b.cells[1].querySelector('input') ? b.cells[1].querySelector('input').value : '';
                 
                 var pA = dateA.split('/'); var pB = dateB.split('/');
                 var sortA = pA.length===3 ? pA[2]+pA[1]+pA[0] : (dateA ? dateA : '00000000');
@@ -1886,38 +1869,42 @@
         }
 
         // ============================================================
-        // EXTRACTION
+        // EXTRACTION (Safe checks added)
         // ============================================================
         function extractTable(tbodyId, kind) {
             var rows = [];
             var isIncome = kind === 'income';
             var isOwner = kind === 'owner';
+            var isDairy = kind === 'dairy';
+            var isAgri = kind === 'agri';
+
             $(tbodyId).querySelectorAll('tr').forEach(function (tr) {
                 if (!tr.querySelector('.rownum')) return;
+                
                 if (isIncome) {
-                    var d = tr.cells[1].querySelector('input').value;
-                    var src = tr.cells[2].querySelector('select').value;
-                    var party = tr.cells[3].querySelector('input').value;
-                    var det = tr.cells[4].querySelector('input').value;
-                    var q = tr.cells[5].querySelector('input').value;
-                    var r = tr.cells[6].querySelector('input').value;
-                    var a = tr.cells[7].querySelector('input').value;
-                    var dest = tr.cells[8].querySelector('select').value;
+                    var d = tr.cells[1] && tr.cells[1].querySelector('input') ? tr.cells[1].querySelector('input').value : '';
+                    var src = tr.cells[2] && tr.cells[2].querySelector('select') ? tr.cells[2].querySelector('select').value : 'Milk';
+                    var party = tr.cells[3] && tr.cells[3].querySelector('input') ? tr.cells[3].querySelector('input').value : '';
+                    var det = tr.cells[4] && tr.cells[4].querySelector('input') ? tr.cells[4].querySelector('input').value : '';
+                    var q = tr.cells[5] && tr.cells[5].querySelector('input') ? tr.cells[5].querySelector('input').value : '';
+                    var r = tr.cells[6] && tr.cells[6].querySelector('input') ? tr.cells[6].querySelector('input').value : '';
+                    var a = tr.cells[7] && tr.cells[7].querySelector('input') ? tr.cells[7].querySelector('input').value : '';
+                    var dest = tr.cells[8] && tr.cells[8].querySelector('select') ? tr.cells[8].querySelector('select').value : 'Owner';
                     if (d || party || det || q || r || a > 0) rows.push({ date: toStorageDate(d), source: src, party: party, details: det, qty: q, rate: r, amount: a, destination: dest });
                 } else if (isOwner) {
-                    var d2 = tr.cells[1].querySelector('input').value;
-                    var det2 = tr.cells[2].querySelector('input').value;
-                    var m = tr.cells[3].querySelector('select').value;
-                    var a2 = tr.cells[4].querySelector('input').value;
+                    var d2 = tr.cells[1] && tr.cells[1].querySelector('input') ? tr.cells[1].querySelector('input').value : '';
+                    var det2 = tr.cells[2] && tr.cells[2].querySelector('input') ? tr.cells[2].querySelector('input').value : '';
+                    var m = tr.cells[3] && tr.cells[3].querySelector('select') ? tr.cells[3].querySelector('select').value : 'Cheque';
+                    var a2 = tr.cells[4] && tr.cells[4].querySelector('input') ? tr.cells[4].querySelector('input').value : '';
                     if (d2 || det2 || a2 > 0) rows.push({ date: toStorageDate(d2), details: det2, method: m, amount: a2 });
-                } else {
-                    var cat = tr.cells[1].querySelector('select').value;
-                    var d3 = tr.cells[2].querySelector('input').value;
-                    var comp = tr.cells[3].querySelector('input').value;
-                    var det3 = tr.cells[4].querySelector('input').value;
-                    var q2 = tr.cells[5].querySelector('input').value;
-                    var r2 = tr.cells[6].querySelector('input').value;
-                    var a3 = tr.cells[7].querySelector('input').value;
+                } else if (isDairy || isAgri) {
+                    var cat = tr.cells[1] && tr.cells[1].querySelector('select') ? tr.cells[1].querySelector('select').value : '';
+                    var d3 = tr.cells[2] && tr.cells[2].querySelector('input') ? tr.cells[2].querySelector('input').value : '';
+                    var comp = tr.cells[3] && tr.cells[3].querySelector('input') ? tr.cells[3].querySelector('input').value : '';
+                    var det3 = tr.cells[4] && tr.cells[4].querySelector('input') ? tr.cells[4].querySelector('input').value : '';
+                    var q2 = tr.cells[5] && tr.cells[5].querySelector('input') ? tr.cells[5].querySelector('input').value : '';
+                    var r2 = tr.cells[6] && tr.cells[6].querySelector('input') ? tr.cells[6].querySelector('input').value : '';
+                    var a3 = tr.cells[7] && tr.cells[7].querySelector('input') ? tr.cells[7].querySelector('input').value : '';
                     if (d3 || comp || det3 || q2 || r2 || a3 > 0) rows.push({ category: cat, date: toStorageDate(d3), company: comp, desc: det3, qty: q2, rate: r2, amount: a3 });
                 }
             });
@@ -1928,13 +1915,13 @@
             var rows = [];
             $('medBody').querySelectorAll('tr').forEach(function (tr) {
                 if (!tr.querySelector('.rownum')) return;
-                var d = tr.cells[1].querySelector('input').value;
-                var comp = tr.cells[2].querySelector('input').value;
-                var nm = tr.cells[3].querySelector('input').value;
-                var q = tr.cells[4].querySelector('input').value;
-                var r = tr.cells[5].querySelector('input').value;
-                var a = tr.cells[6].querySelector('input').value;
-                var det = tr.cells[9].querySelector('input').value;
+                var d = tr.cells[1] && tr.cells[1].querySelector('input') ? tr.cells[1].querySelector('input').value : '';
+                var comp = tr.cells[2] && tr.cells[2].querySelector('input') ? tr.cells[2].querySelector('input').value : '';
+                var nm = tr.cells[3] && tr.cells[3].querySelector('input') ? tr.cells[3].querySelector('input').value : '';
+                var q = tr.cells[4] && tr.cells[4].querySelector('input') ? tr.cells[4].querySelector('input').value : '';
+                var r = tr.cells[5] && tr.cells[5].querySelector('input') ? tr.cells[5].querySelector('input').value : '';
+                var a = tr.cells[6] && tr.cells[6].querySelector('input') ? tr.cells[6].querySelector('input').value : '';
+                var det = tr.cells[9] && tr.cells[9].querySelector('input') ? tr.cells[9].querySelector('input').value : '';
                 if (d || comp || nm || q || r || a > 0) rows.push({ date: toStorageDate(d), company: comp, name: nm, qty: q, rate: r, amount: a, desc: det });
             });
             return rows;
@@ -1944,9 +1931,9 @@
             var rows = [];
             $('womenBody').querySelectorAll('tr').forEach(function (tr) {
                 if (!tr.querySelector('.rownum')) return;
-                var nm = tr.cells[1].querySelector('input').value;
+                var nm = tr.cells[1] && tr.cells[1].querySelector('input') ? tr.cells[1].querySelector('input').value : '';
                 if (!nm) return;
-                rows.push({ name: nm, husband: tr.cells[2].querySelector('input').value, status: tr.cells[3].querySelector('select').value, amount: tr.cells[4].querySelector('input').value, desc: tr.cells[5].querySelector('input').value });
+                rows.push({ name: nm, husband: tr.cells[2] && tr.cells[2].querySelector('input') ? tr.cells[2].querySelector('input').value : '', status: tr.cells[3] && tr.cells[3].querySelector('select') ? tr.cells[3].querySelector('select').value : 'Other', amount: tr.cells[4] && tr.cells[4].querySelector('input') ? tr.cells[4].querySelector('input').value : '', desc: tr.cells[5] && tr.cells[5].querySelector('input') ? tr.cells[5].querySelector('input').value : '' });
             });
             return rows;
         }
@@ -1955,21 +1942,21 @@
             var rows = [];
             $('empBody').querySelectorAll('tr').forEach(function (tr) {
                 if (!tr.querySelector('.rownum')) return;
-                var month = tr.cells[1].querySelector('input').value || new Date().toISOString().slice(0,7);
-                var name = tr.cells[2].querySelector('input').value.trim();
+                var month = tr.cells[1] && tr.cells[1].querySelector('input') ? tr.cells[1].querySelector('input').value : new Date().toISOString().slice(0,7);
+                var name = tr.cells[2] && tr.cells[2].querySelector('input') ? tr.cells[2].querySelector('input').value.trim() : '';
                 if (!name) return;
                 rows.push({ 
                     month: month, 
                     name: name, 
-                    designation: tr.cells[3].querySelector('select').value, 
-                    phone: tr.cells[4].querySelector('input').value, 
-                    cnic: tr.cells[5].querySelector('input').value, 
-                    address: tr.cells[6].querySelector('input').value, 
-                    basic: tr.cells[7].querySelector('input').value, 
-                    bonus: tr.cells[8].querySelector('input').value, 
-                    deduction: tr.cells[9].querySelector('input').value, 
-                    advance: tr.cells[10].querySelector('input').value, 
-                    net: tr.cells[11].querySelector('input').value 
+                    designation: tr.cells[3] && tr.cells[3].querySelector('select') ? tr.cells[3].querySelector('select').value : '', 
+                    phone: tr.cells[4] && tr.cells[4].querySelector('input') ? tr.cells[4].querySelector('input').value : '', 
+                    cnic: tr.cells[5] && tr.cells[5].querySelector('input') ? tr.cells[5].querySelector('input').value : '', 
+                    address: tr.cells[6] && tr.cells[6].querySelector('input') ? tr.cells[6].querySelector('input').value : '', 
+                    basic: tr.cells[7] && tr.cells[7].querySelector('input') ? tr.cells[7].querySelector('input').value : '', 
+                    bonus: tr.cells[8] && tr.cells[8].querySelector('input') ? tr.cells[8].querySelector('input').value : '', 
+                    deduction: tr.cells[9] && tr.cells[9].querySelector('input') ? tr.cells[9].querySelector('input').value : '', 
+                    advance: tr.cells[10] && tr.cells[10].querySelector('input') ? tr.cells[10].querySelector('input').value : '', 
+                    net: tr.cells[11] && tr.cells[11].querySelector('input') ? tr.cells[11].querySelector('input').value : '' 
                 });
             });
             return rows;
@@ -1979,17 +1966,17 @@
             var rows = [];
             $('milkBody').querySelectorAll('tr').forEach(function (tr) {
                 if (!tr.querySelector('.rownum')) return;
-                var d = tr.cells[1].querySelector('input').value;
-                var vol = tr.cells[2].querySelector('input').value;
-                var fat = tr.cells[3].querySelector('input').value;
-                var lr = tr.cells[4].querySelector('input').value;
-                var ts = tr.cells[5].querySelector('input').value;
-                var actual = tr.cells[6].querySelector('input').value;
-                var rate = tr.cells[7].querySelector('input').value;
-                var amt = tr.cells[8].querySelector('input').value;
-                var paid = tr.cells[9].querySelector('input').value;
-                var due = tr.cells[10].querySelector('input').value;
-                var short = tr.cells[11].querySelector('input').value;
+                var d = tr.cells[1] && tr.cells[1].querySelector('input') ? tr.cells[1].querySelector('input').value : '';
+                var vol = tr.cells[2] && tr.cells[2].querySelector('input') ? tr.cells[2].querySelector('input').value : '';
+                var fat = tr.cells[3] && tr.cells[3].querySelector('input') ? tr.cells[3].querySelector('input').value : '';
+                var lr = tr.cells[4] && tr.cells[4].querySelector('input') ? tr.cells[4].querySelector('input').value : '';
+                var ts = tr.cells[5] && tr.cells[5].querySelector('input') ? tr.cells[5].querySelector('input').value : '';
+                var actual = tr.cells[6] && tr.cells[6].querySelector('input') ? tr.cells[6].querySelector('input').value : '';
+                var rate = tr.cells[7] && tr.cells[7].querySelector('input') ? tr.cells[7].querySelector('input').value : '';
+                var amt = tr.cells[8] && tr.cells[8].querySelector('input') ? tr.cells[8].querySelector('input').value : '';
+                var paid = tr.cells[9] && tr.cells[9].querySelector('input') ? tr.cells[9].querySelector('input').value : '';
+                var due = tr.cells[10] && tr.cells[10].querySelector('input') ? tr.cells[10].querySelector('input').value : '';
+                var short = tr.cells[11] && tr.cells[11].querySelector('input') ? tr.cells[11].querySelector('input').value : '';
                 if (d || vol || fat || lr || amt > 0) rows.push({ date: toStorageDate(d), volume: vol, fat: fat, lr: lr, ts: ts, actual: actual, rate: rate, amount: amt, paid: paid, due: due, short: short });
             });
             return rows;
