@@ -1279,6 +1279,7 @@
         var idToken = null;
         var autoSyncTimer = null;
         var isSavingNow = false;
+        var saveTimer = null;
 
         // THIS IS THE NEW MASTER LEDGER. ALL DATA LIVES HERE.
         var LEDGER = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], dairyEmployees: [], agriEmployees: [], milkData: {} };
@@ -1293,11 +1294,98 @@
         function getMonthName(mKey) { if(!mKey) return ''; var p = mKey.split('-'); var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; return months[parseInt(p[1]) - 1] + ' ' + p[0]; }
         function shiftMonth(mKey, n) { var p = mKey.split('-'); var y = parseInt(p[0]), m = parseInt(p[1]) + n; while (m > 12) { m -= 12; y++; } while (m < 1) { m += 12; y--; } return y + '-' + String(m).padStart(2, '0'); }
 
+        // Helper to prevent infinite hangs
+        function fetchWithTimeout(resource, options = {}) {
+            const { timeout = 15000 } = options;
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeout);
+            return fetch(resource, {
+                ...options,
+                signal: controller.signal
+            }).finally(() => clearTimeout(id));
+        }
+
+        // Local Auto-Save
+        function scheduleAutoSave() {
+            if (saveTimer) clearTimeout(saveTimer);
+            saveTimer = setTimeout(function() {
+                saveToLocalCache();
+            }, 1000);
+        }
+
+        function saveToLocalCache() {
+            // Extract all DOM data, group by month, save to local cache
+            var fullData = extractAllData();
+            Object.keys(LEDGER.milkData).forEach(function(c) {
+                if (!fullData.milkData[c]) fullData.milkData[c] = LEDGER.milkData[c];
+            });
+
+            var grouped = {};
+            function getMonthKey(dStr) {
+                var d = toStorageDate(dStr);
+                return d ? d.substring(0, 7) : new Date().toISOString().slice(0,7);
+            }
+            function addToGroup(month, key, row) {
+                if (!grouped[month]) grouped[month] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: [], agriEmployees: [] };
+                grouped[month][key].push(row);
+            }
+
+            fullData.income.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'income', r); });
+            fullData.owner.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'owner', r); });
+            fullData.dairy.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'dairy', r); });
+            fullData.agri.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'agri', r); });
+            fullData.medicine.forEach(function(r){ if(r.date) addToGroup(getMonthKey(r.date), 'medicine', r); });
+            fullData.women.forEach(function(r){ 
+                var m = r.date ? getMonthKey(r.date) : new Date().toISOString().slice(0,7);
+                addToGroup(m, 'women', r); 
+            });
+            Object.keys(fullData.milkData).forEach(function(c) {
+                fullData.milkData[c].forEach(function(r) {
+                    if (!r.date) return;
+                    var m = getMonthKey(r.date);
+                    if (!grouped[m]) grouped[m] = { income: [], owner: [], dairy: [], agri: [], medicine: [], women: [], milkData: {}, dairyEmployees: [], agriEmployees: [] };
+                    if (!grouped[m].milkData[c]) grouped[m].milkData[c] = [];
+                    grouped[m].milkData[c].push(r);
+                });
+            });
+            fullData.dairyEmployees.forEach(function(r){ if(r.month) addToGroup(r.month, 'dairyEmployees', r); });
+            fullData.agriEmployees.forEach(function(r){ if(r.month) addToGroup(r.month, 'agriEmployees', r); });
+
+            // Save grouped data to localStorage
+            var cached = getCachedMonths();
+            Object.keys(grouped).forEach(function(m) {
+                localStorage.setItem('hrFarm_cache_' + m, JSON.stringify(grouped[m]));
+                if (cached.indexOf(m) < 0) cached.push(m);
+            });
+            setCachedMonths(cached);
+        }
+
+        // Token Expiry Check
+        function checkTokenExpiry() {
+            if (!idToken) return;
+            try {
+                var payload = JSON.parse(atob(idToken.split('.')[1]));
+                var exp = payload.exp * 1000;
+                var diff = exp - Date.now();
+                if (diff <= 0) {
+                    // Token expired
+                    signOut();
+                } else if (diff < 5 * 60 * 1000) {
+                    // Less than 5 mins left
+                    if (!window.expiryWarningShown) {
+                        alert("⚠️ Important: Your login session will expire in 5 minutes. Please save your work, click 'Sign out', and sign in again to avoid losing data.");
+                        window.expiryWarningShown = true;
+                    }
+                }
+            } catch(e){}
+        }
+
         // ============================================================
         // AUTHENTICATION
         // ============================================================
         function handleCredentialResponse(response) {
             idToken = response.credential;
+            window.expiryWarningShown = false;
             try {
                 var payload = JSON.parse(atob(response.credential.split('.')[1]));
                 fetchUserInfo(payload.email);
@@ -1309,7 +1397,7 @@
 
         function fetchUserInfo(email) {
             var url = API_URL + '?action=ping&idToken=' + encodeURIComponent(idToken);
-            fetch(url).then(function (r) { return r.json(); }).then(function (data) {
+            fetchWithTimeout(url).then(function (r) { return r.json(); }).then(function (data) {
                 if (!data.ok) {
                     $('signinError').textContent = data.error;
                     $('signinError').style.display = 'block';
@@ -1334,6 +1422,9 @@
             roleEl.textContent = currentUser.role;
             roleEl.className = 'role-badge role-' + currentUser.role;
             initApp(); // Load data
+            
+            // Start token checker
+            setInterval(checkTokenExpiry, 60000); // check every minute
         }
 
         function signOut() {
@@ -1359,29 +1450,29 @@
         async function initApp() {
             updateSyncBar('syncing', 'Syncing...');
             
-            // 1. Instantly load from cache and render
-            var cachedMonths = getCachedMonths();
-            rebuildLedgerFromCache(cachedMonths);
-            renderAllTables();
-            renderMilk();
-            renderEmployees();
-            renderDashboard();
-            updateLeaseDisplay();
-            
-            // 2. Fetch fresh list from cloud
             try {
+                // 1. Instantly load from cache and render
+                var cachedMonths = getCachedMonths();
+                rebuildLedgerFromCache(cachedMonths);
+                renderAllTables();
+                renderMilk();
+                renderEmployees();
+                renderDashboard();
+                updateLeaseDisplay();
+                
+                // 2. Fetch fresh list from cloud
                 var url = API_URL + '?action=getAllSavedMonths&idToken=' + encodeURIComponent(idToken);
-                var res = await fetch(url);
+                var res = await fetchWithTimeout(url, { timeout: 10000 });
                 var json = await res.json();
+                
                 if (json.ok && json.months) {
                     var cloudMonths = json.months;
                     setCachedMonths(cloudMonths);
                     
-                    // 3. Fetch missing months in parallel
-                    var fetchPromises = cloudMonths.map(function(m) {
-                        return loadMonthData(m);
-                    });
-                    await Promise.all(fetchPromises);
+                    // 3. Fetch missing months sequentially to avoid GAS limits
+                    for (var i = 0; i < cloudMonths.length; i++) {
+                        await loadMonthData(cloudMonths[i]);
+                    }
                     
                     // 4. Rebuild and re-render
                     rebuildLedgerFromCache(cloudMonths);
@@ -1392,25 +1483,28 @@
                 }
                 updateSyncBar('online', 'Ready');
             } catch(err) {
-                console.error("Cloud sync failed, using cached data.", err);
+                console.warn("Cloud sync failed or timed out. Using cache.", err);
                 updateSyncBar('offline', 'Offline (Using cache)');
+            } finally {
+                // ALWAYS resolve the syncing bar, no matter what
+                updateSyncBar('online', 'Ready');
+                localStorage.setItem('hrFarm_lastSave', 'Sync Complete ' + new Date().toLocaleTimeString());
             }
-            
-            if (autoSyncTimer) clearInterval(autoSyncTimer);
-            autoSyncTimer = setInterval(function () { if (navigator.onLine) flushPending(); }, 30000);
         }
 
         async function loadMonthData(monthKey) {
             var cacheKey = 'hrFarm_cache_' + monthKey;
             var url = API_URL + '?action=getMonth&month=' + encodeURIComponent(monthKey) + '&idToken=' + encodeURIComponent(idToken);
             try {
-                var res = await fetch(url);
+                var res = await fetchWithTimeout(url, { timeout: 10000 });
                 var json = await res.json();
                 if (json.ok && json.data) {
                     localStorage.setItem(cacheKey, JSON.stringify(json.data));
                     return json.data;
                 }
-            } catch(e) { }
+            } catch(e) {
+                console.warn("Could not fetch month " + monthKey, e);
+            }
             return getCachedMonth(monthKey);
         }
 
@@ -1480,6 +1574,12 @@
         }
 
         async function forceSync() {
+            if (isTokenExpired()) {
+                alert("Your session has expired. Please sign in again.");
+                signOut();
+                return;
+            }
+
             updateSyncBar('syncing', 'Saving...');
             
             var fullData = extractAllData();
@@ -1561,20 +1661,26 @@
         }
 
         function saveMonthToCloud(monthKey, data) {
-            return fetch(API_URL, {
+            return fetchWithTimeout(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify({ action: 'saveMonth', idToken: idToken, month: monthKey, data: data })
+                body: JSON.stringify({ action: 'saveMonth', idToken: idToken, month: monthKey, data: data }),
+                timeout: 15000
             }).then(function (r) { return r.json(); }).then(function (json) {
-                if (!json.ok) throw new Error(json.error);
+                if (!json.ok) {
+                    if (json.error && json.error.toLowerCase().includes('token')) {
+                        alert('Your session has expired. Please sign in again.');
+                        signOut();
+                        throw new Error('Invalid token');
+                    }
+                    throw new Error(json.error);
+                }
                 return true;
             });
         }
 
         function flushPending() {
             // Since we now save everything in one batch, we just call forceSync if there are changes
-            // For a more robust system, you'd track dirty state. Here we just check if the user clicked save.
-            // To keep it simple, we rely on the user clicking Save. 
         }
 
         // ============================================================
@@ -2613,7 +2719,7 @@
                 try {
                     currentUser = JSON.parse(cachedUser);
                     idToken = cachedToken;
-                    fetch(API_URL + '?action=ping&idToken=' + encodeURIComponent(idToken))
+                    fetchWithTimeout(API_URL + '?action=ping&idToken=' + encodeURIComponent(idToken), { timeout: 10000 })
                         .then(function (r) { return r.json(); })
                         .then(function (d) {
                             if (d.ok) { showApp(); }
